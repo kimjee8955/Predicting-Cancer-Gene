@@ -1,0 +1,204 @@
+---
+title: "Midterm Report"
+author: "Team Chi Beta Gamma: Eustina Kim, Tiffany Feng, Jonathan Martinez, Kevin Chen"
+date: "10/30/2020"
+output: pdf_document
+---
+
+```{r,message=FALSE}
+library(dplyr)
+library(readr)
+library(caret)
+library(nnet)
+library(ggplot2)
+```
+
+```{r}
+train <- read.csv("training.csv")
+test <- read.csv("test.csv")
+```
+
+```{r}
+#shows how many class 0,1,2 exist in the training data
+num_class<-train %>% group_by(class) %>% summarise(counts=n())
+print(num_class)
+```
+
+```{r}
+#Graph frequencies of each class
+# png("class counts.png", units="px", width= 1920, height= 1080, res=300)
+
+ggplot(num_class, aes(x = class, y = counts)) +
+  geom_bar(stat="identity", fill="#56B5F0") +
+  labs(title = "frequencies for `class` variable") + theme(axis.title = element_text(size = 13), 
+    plot.title = element_text(size = 16, 
+        face = "bold", hjust = 0.5)) +
+  geom_text(aes(label=counts), position=position_dodge(width=0.9), vjust=-0.25, size=4)
+  
+# dev.off()
+
+```
+
+
+```{r}
+#Add standardized variables in threes
+h1 <- train[,66:98]
+h <-scale(h1, center = TRUE, scale = TRUE) #standardize
+h <- as.data.frame(h)
+
+sums <- data.frame(matrix(nrow=nrow(h),ncol =11))
+j <-1
+i <- 1
+#combine variables
+while(i < 33){
+  sums[,j] <- rowSums(h[,i:(i+2)])
+  j <- j+1
+  i <- i+3
+}
+```
+
+```{r}
+#fix column names
+columns <- c("H3K4me3","H3K4me2","H3K4me1","H3K36me3","H3K27ac",
+             "H3K27me3","H3K9me3","H3K9ac","H3K9me2","H3K79me2","H4K20me1")
+names(sums) <- columns
+```
+
+```{r}
+#combine standardized columns to make new training data
+train1 <- train[,2:65]
+train1 <- train1 %>% mutate(sums) %>% mutate(class=train$class)
+```
+
+
+```{r}
+#do the same procedure for test data
+h2 <- test[,66:98]
+h_test <-scale(h2, center = TRUE, scale = TRUE) #standardize
+h_test <- as.data.frame(h_test)
+
+sums_test <- data.frame(matrix(nrow=nrow(h_test),ncol =11))
+j <-1
+i <- 1
+#combine variables
+while(i < 33){
+  sums_test[,j] <- rowSums(h_test[,i:(i+2)])
+  j <- j+1
+  i <- i+3
+}
+
+#fix column names
+columns <- c("H3K4me3","H3K4me2","H3K4me1","H3K36me3","H3K27ac",
+             "H3K27me3","H3K9me3","H3K9ac","H3K9me2","H3K79me2","H4K20me1")
+names(sums_test) <- columns
+
+#combine new data
+test1 <- test[,2:65]
+test1 <- test1 %>% mutate(sums_test) 
+```
+
+
+```{r}
+#run lm
+mod1 <- lm(class~.,data=train1)
+summary(mod1)
+```
+
+```{r}
+#get predictors with p-value less than 0.1
+predictors<-summary(mod1)$coefficients[,4] <0.1
+predictors <- names(predictors[predictors==TRUE])
+```
+
+```{r}
+#subset training and test data with chosen predictors
+p_train <- train1 %>% select(class,all_of(predictors))
+p_test <- test1 %>% select(all_of(predictors))
+```
+
+
+```{r}
+set.seed(1)
+p_train$class <- as.factor(p_train$class)
+#Log
+plog_fit <- train(
+  form = class ~.,
+  data = p_train,
+  trControl = trainControl(method = "cv", number = 10),
+  method = "multinom"
+)
+print(plog_fit)
+```
+
+```{r}
+set.seed(1)
+#LDA
+lda_fit <- train(
+  form = class ~.,
+  data = p_train,
+  trControl = trainControl(method = "cv", number = 10),
+  method = "lda"
+)
+print(lda_fit)
+```
+
+
+```{r}
+set.seed(1)
+#KNN
+knn_fit <- train(
+  form = class ~.,
+  data = p_train,
+  trControl = trainControl(method = "cv", number = 5),
+  method = "knn",
+  preProcess = c("center","scale"),
+  tuneGrid = expand.grid(k = seq(1, 20, by = 1))
+)
+print(knn_fit)
+```
+
+
+```{r}
+#predict probabilities on test data
+log_pred<-predict(plog_fit, p_test, "prob")
+```
+
+```{r}
+#make a function to predict class based on probabilities
+pred_class <- function(prob,threshold){
+  preds = rep(NA, nrow(prob)) # vector to hold predictions
+
+  for(i in 1:nrow(prob)){
+    if(prob[i,1] >= threshold){ #classify as 0
+      preds[i] = 0
+    }
+    else if(prob[i,2] > prob[i,3]){ #classify as 1 if prob bigger than prob of 2
+      preds[i] = 1
+    }
+    else{
+      preds[i] = 2
+    }
+  }
+  return(preds)
+}
+```
+
+```{r}
+#set threshold as the mean of the probabilities of predicting 0. 
+prediction <- pred_class(log_pred,mean(log_pred[,1]))
+```
+
+```{r}
+final <- data.frame("id" = test$id, "class" = prediction)
+```
+
+
+```{r}
+write.csv(final, "/Users/eustinakim/Desktop/Stats 101C/ucla-stats101c-lec4/threshold2.csv",row.names = FALSE)
+```
+
+
+
+
+
+
